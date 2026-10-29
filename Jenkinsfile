@@ -4,7 +4,7 @@ pipeline {
   environment {
     DB_HOST = 'localhost'
     DB_USER = 'catering'
-    DB_PASS = 'ISI_PASSWORD_MYSQL_KAMU'
+    DB_PASS = 'Zhevania#2026'
   }
   stages {
     stage('Install') {
