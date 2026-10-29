@@ -1,61 +1,187 @@
-from flask import Flask, request, redirect, render_template_string
+import os
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+
+from flask import (Flask, request, redirect, url_for, session, flash,
+                   render_template, jsonify)
+from jinja2 import DictLoader
+from werkzeug.security import check_password_hash
+
 from db import get_conn, init_db
-from logic import hitung_total
+from logic import hitung_total, status_pengingat
+from templates import TEMPLATES
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "catering-umkm-dev-key")
+app.jinja_loader = DictLoader(TEMPLATES)
 
-PAGE = """
-<!doctype html><title>Catering UMKM</title>
-<body style="font-family:sans-serif;max-width:800px;margin:20px auto;padding:0 12px">
-<h2>🍱 Pesanan Catering UMKM</h2>
-<form method="post" action="/tambah" style="display:grid;gap:6px">
- <input name="pelanggan" placeholder="Nama pelanggan" required>
- <input name="menu" placeholder="Menu (mis. Nasi Box Ayam)" required>
- <input name="jumlah" type="number" placeholder="Jumlah porsi" required>
- <input name="harga" type="number" placeholder="Harga per porsi" required>
- <input name="tanggal" type="date">
- <button>Simpan</button>
-</form>
-<table border="1" cellpadding="6" style="margin-top:16px;width:100%">
-<tr><th>Pelanggan</th><th>Menu</th><th>Porsi</th><th>Total</th><th>Tgl</th><th>Status</th><th>Aksi</th></tr>
-{% for p in data %}
-<tr><td>{{p[1]}}</td><td>{{p[2]}}</td><td>{{p[3]}}</td><td>Rp{{'{:,}'.format(p[5])}}</td><td>{{p[6]}}</td><td>{{p[7]}}</td>
-<td><a href="/status/{{p[0]}}">Selesai</a> | <a href="/hapus/{{p[0]}}" onclick="return confirm('Hapus?')">Hapus</a></td></tr>
-{% endfor %}
-</table></body>
-"""
+TZ = timezone(timedelta(hours=int(os.getenv("TZ_OFFSET", "8"))))  # WITA
+BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 
+
+@app.template_filter("rupiah")
+def rupiah(n):
+    return "Rp" + f"{int(n or 0):,}".replace(",", ".")
+
+
+@app.template_filter("tgl")
+def tgl(d):
+    return f"{d.day} {BULAN[d.month - 1]} {d.year}" if d else "-"
+
+
+def hari_ini():
+    return datetime.now(TZ).date()
+
+
+def query(sql, params=(), commit=False, one=False):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(sql, params)
+    if commit:
+        conn.commit()
+        result = cur.lastrowid
+    else:
+        result = cur.fetchone() if one else cur.fetchall()
+    cur.close()
+    conn.close()
+    return result
+
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*a, **kw):
+        if "user" not in session:
+            return redirect(url_for("login"))
+        return f(*a, **kw)
+    return wrapper
+
+
+def daftar_pengingat():
+    today = hari_ini()
+    rows = query(
+        "SELECT * FROM pesanan WHERE status='Baru' AND tanggal_acara IN (%s, %s) ORDER BY tanggal_acara, id",
+        (today, today + timedelta(days=1)),
+    )
+    for r in rows:
+        r["pengingat"] = status_pengingat(r["tanggal_acara"], today)
+    return rows
+
+
+# ---------- Auth ----------
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        u = query("SELECT * FROM users WHERE username=%s",
+                  (request.form.get("username", "").strip(),), one=True)
+        if u and check_password_hash(u["password_hash"], request.form.get("password", "")):
+            session["user"] = u["username"]
+            return redirect(url_for("index"))
+        flash("Username atau password salah", "error")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------- Dashboard + CRUD ----------
 @app.route("/")
+@login_required
 def index():
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT * FROM pesanan ORDER BY id DESC")  # READ
-    data = cur.fetchall(); conn.close()
-    return render_template_string(PAGE, data=data)
+    q = request.args.get("q", "").strip()
+    st = request.args.get("status", "")
+    sql, params = "SELECT * FROM pesanan WHERE 1=1", []
+    if q:
+        sql += " AND (pelanggan LIKE %s OR menu LIKE %s)"
+        params += [f"%{q}%", f"%{q}%"]
+    if st:
+        sql += " AND status=%s"
+        params.append(st)
+    sql += " ORDER BY (tanggal_acara IS NULL), tanggal_acara ASC, id DESC"
+    rows = query(sql, params)
+    today = hari_ini()
+    for r in rows:
+        r["pengingat"] = status_pengingat(r["tanggal_acara"], today) if r["status"] == "Baru" else None
 
-@app.route("/tambah", methods=["POST"])  # CREATE
-def tambah():
+    semua = query("SELECT total, status FROM pesanan")
+    notif = daftar_pengingat()
+    stats = {
+        "total": len(semua),
+        "proses": sum(1 for s in semua if s["status"] == "Baru"),
+        "selesai": sum(1 for s in semua if s["status"] == "Selesai"),
+        "pendapatan": sum(s["total"] for s in semua if s["status"] == "Selesai"),
+    }
+    return render_template("dashboard.html", rows=rows, stats=stats, notif=notif,
+                           q=q, st=st, user=session["user"],
+                           today=tgl(today), besok_tgl=(today + timedelta(days=1)).isoformat())
+
+
+def _baca_form():
     f = request.form
     jumlah, harga = int(f["jumlah"]), int(f["harga"])
-    total = hitung_total(jumlah, harga)
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("INSERT INTO pesanan (pelanggan,menu,jumlah,harga_satuan,total,tanggal_acara) VALUES (%s,%s,%s,%s,%s,%s)",
-                (f["pelanggan"], f["menu"], jumlah, harga, total, f["tanggal"] or None))
-    conn.commit(); conn.close()
-    return redirect("/")
+    return (f["pelanggan"].strip(), f["menu"].strip(), jumlah, harga,
+            hitung_total(jumlah, harga), f.get("tanggal") or None)
 
-@app.route("/status/<int:id>")  # UPDATE
+
+@app.route("/tambah", methods=["POST"])
+@login_required
+def tambah():
+    try:
+        data = _baca_form()
+        query("INSERT INTO pesanan (pelanggan,menu,jumlah,harga_satuan,total,tanggal_acara) "
+              "VALUES (%s,%s,%s,%s,%s,%s)", data, commit=True)
+        flash("Pesanan berhasil ditambahkan", "ok")
+    except (ValueError, KeyError) as e:
+        flash(f"Data tidak valid: {e}", "error")
+    return redirect(url_for("index"))
+
+
+@app.route("/edit/<int:id>", methods=["GET", "POST"])
+@login_required
+def edit(id):
+    if request.method == "POST":
+        try:
+            data = _baca_form()
+            query("UPDATE pesanan SET pelanggan=%s, menu=%s, jumlah=%s, harga_satuan=%s, "
+                  "total=%s, tanggal_acara=%s WHERE id=%s", data + (id,), commit=True)
+            flash("Pesanan berhasil diperbarui", "ok")
+            return redirect(url_for("index"))
+        except (ValueError, KeyError) as e:
+            flash(f"Data tidak valid: {e}", "error")
+    p = query("SELECT * FROM pesanan WHERE id=%s", (id,), one=True)
+    if not p:
+        flash("Pesanan tidak ditemukan", "error")
+        return redirect(url_for("index"))
+    return render_template("edit.html", p=p, user=session["user"])
+
+
+@app.route("/status/<int:id>", methods=["POST"])
+@login_required
 def status(id):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("UPDATE pesanan SET status='Selesai' WHERE id=%s", (id,))
-    conn.commit(); conn.close()
-    return redirect("/")
+    query("UPDATE pesanan SET status='Selesai' WHERE id=%s", (id,), commit=True)
+    flash("Pesanan ditandai selesai", "ok")
+    return redirect(request.referrer or url_for("index"))
 
-@app.route("/hapus/<int:id>")  # DELETE
+
+@app.route("/hapus/<int:id>", methods=["POST"])
+@login_required
 def hapus(id):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("DELETE FROM pesanan WHERE id=%s", (id,))
-    conn.commit(); conn.close()
-    return redirect("/")
+    query("DELETE FROM pesanan WHERE id=%s", (id,), commit=True)
+    flash("Pesanan dihapus", "ok")
+    return redirect(url_for("index"))
+
+
+# ---------- Pemberitahuan ----------
+@app.route("/api/notifikasi")
+def api_notifikasi():
+    if "user" not in session:
+        return jsonify(error="unauthorized"), 401
+    items = [{"id": r["id"], "pelanggan": r["pelanggan"], "menu": r["menu"],
+              "jumlah": r["jumlah"], "kapan": r["pengingat"]} for r in daftar_pengingat()]
+    return jsonify(jumlah=len(items), items=items)
+
 
 if __name__ == "__main__":
     init_db()
