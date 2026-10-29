@@ -33,6 +33,14 @@ def init_db():
         tanggal_acara DATE,
         status VARCHAR(20) DEFAULT 'Baru'
     )""")
+    # Tambah kolom baru kalau tabel lama belum punya (aman dijalankan berulang)
+    cur.execute("SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA='catering_umkm' AND TABLE_NAME='pesanan'")
+    kolom = {str(r[0]).lower() for r in cur.fetchall()}
+    if "jenis" not in kolom:
+        cur.execute("ALTER TABLE pesanan ADD COLUMN jenis VARCHAR(10) NOT NULL DEFAULT 'Dus'")
+    if "pilihan_menu" not in kolom:
+        cur.execute("ALTER TABLE pesanan ADD COLUMN pilihan_menu TEXT NULL")
     cur.execute("""CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,
