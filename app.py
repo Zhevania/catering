@@ -1,6 +1,3 @@
-app.py 
-
-
 import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
