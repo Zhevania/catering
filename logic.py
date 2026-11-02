@@ -1,4 +1,3 @@
-
 from datetime import timedelta
 
 HARGA_PAKET = 40000     # harga per pax di dalam paket (100/200/300/500 pax)
