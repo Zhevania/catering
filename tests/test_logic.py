@@ -1,16 +1,34 @@
 import pytest
 from datetime import date
-from logic import (hitung_paket, hitung_dus, validasi_pilihan, semua_menu,
-                   status_pengingat, JUMLAH_MENU)
+from logic import (hitung_paket, hitung_dus, validasi_pilihan, validasi_kontak,
+                   semua_menu, status_pengingat, JUMLAH_MENU)
 
 
-def test_paket_50_pax():
-    assert hitung_paket(50) == 2000000
+def test_paket_pilihan_pax():
+    assert hitung_paket(100) == 4000000
+    assert hitung_paket(200) == 8000000
+    assert hitung_paket(300) == 12000000
+    assert hitung_paket(500) == 20000000
 
 
-def test_paket_di_bawah_minimal():
+def test_paket_dengan_pax_tambahan():
+    assert hitung_paket(100, 10) == 4000000 + 10 * 45000
+    assert hitung_paket(500, 1) == 20000000 + 45000
+
+
+def test_paket_pax_tidak_valid():
     with pytest.raises(ValueError):
-        hitung_paket(49)
+        hitung_paket(150)
+    with pytest.raises(ValueError):
+        hitung_paket(100, -1)
+
+
+def test_kontak():
+    assert validasi_kontak("0812-3456-7890", " Jl. Mawar 1 ") == ("081234567890", "Jl. Mawar 1")
+    with pytest.raises(ValueError):
+        validasi_kontak("123", "Jl. Mawar")
+    with pytest.raises(ValueError):
+        validasi_kontak("081234567890", "  ")
 
 
 def test_dus_bebas():
