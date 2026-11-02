@@ -1,3 +1,6 @@
+db.py
+
+
 import os
 import mysql.connector
 from werkzeug.security import generate_password_hash
@@ -41,6 +44,14 @@ def init_db():
         cur.execute("ALTER TABLE pesanan ADD COLUMN jenis VARCHAR(10) NOT NULL DEFAULT 'Dus'")
     if "pilihan_menu" not in kolom:
         cur.execute("ALTER TABLE pesanan ADD COLUMN pilihan_menu TEXT NULL")
+    # Kolom identitas pembeli & pax tambahan
+    for nama, ddl in [("no_hp", "VARCHAR(20) NULL"),
+                      ("alamat", "TEXT NULL"),
+                      ("catatan", "TEXT NULL"),
+                      ("pax_paket", "INT NULL"),
+                      ("pax_tambahan", "INT NOT NULL DEFAULT 0")]:
+        if nama not in kolom:
+            cur.execute(f"ALTER TABLE pesanan ADD COLUMN {nama} {ddl}")
     cur.execute("""CREATE TABLE IF NOT EXISTS users (
         id INT AUTO_INCREMENT PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,

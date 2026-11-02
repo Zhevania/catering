@@ -1,8 +1,27 @@
+logic.py 
+
+
+
 from datetime import timedelta
 
-HARGA_PAKET = 40000   # per pax
-MIN_PAX = 50          # minimal pemesanan paket
-JUMLAH_MENU = 15      # jumlah menu yang harus dipilih per paket
+HARGA_PAKET = 40000     # harga per pax di dalam paket (100/200/300/500 pax)
+HARGA_TAMBAHAN = 45000  # harga per 1 pax tambahan di luar pilihan paket
+JUMLAH_MENU = 15        # jumlah menu yang harus dipilih per paket
+
+# Pilihan jumlah pax di dalam paket. Harga tiap pilihan bisa diubah sendiri,
+# misalnya kalau ada diskon untuk 500 pax: 500: 19000000
+PILIHAN_PAX = [100, 200, 300, 500]
+HARGA_PILIHAN = {p: p * HARGA_PAKET for p in PILIHAN_PAX}
+
+# Daftar paket yang tampil di halaman pemesanan. Mau tambah paket lain?
+# Tambahkan entri baru di sini (kunci, nama, deskripsi, jumlah menu yang dipilih).
+PAKET = {
+    "prasmanan": {
+        "nama": "Paket Prasmanan",
+        "deskripsi": f"Prasmanan lengkap, pilih {JUMLAH_MENU} menu favoritmu",
+        "jumlah_menu": JUMLAH_MENU,
+    },
+}
 
 # Daftar menu yang bisa dipilih. Ubah/tambah sesuai menu usaha kamu.
 MENU_PAKET = {
@@ -30,11 +49,23 @@ def semua_menu():
     return [m for items in MENU_PAKET.values() for m in items]
 
 
-def hitung_paket(pax):
-    """Total paket prasmanan: pax x Rp40.000, minimal 50 pax."""
-    if pax < MIN_PAX:
-        raise ValueError(f"Pemesanan paket minimal {MIN_PAX} pax")
-    return pax * HARGA_PAKET
+def hitung_paket(pax_paket, pax_tambahan=0):
+    """Total = harga pilihan paket (100/200/300/500 pax) + pax tambahan x Rp45.000."""
+    if pax_paket not in HARGA_PILIHAN:
+        raise ValueError("Pilih jumlah pax paket: " + ", ".join(map(str, PILIHAN_PAX)))
+    if pax_tambahan < 0:
+        raise ValueError("Pax tambahan tidak boleh negatif")
+    return HARGA_PILIHAN[pax_paket] + pax_tambahan * HARGA_TAMBAHAN
+
+
+def validasi_kontak(no_hp, alamat):
+    """Nomor HP dan alamat wajib diisi; nomor HP dirapikan jadi angka saja."""
+    hp = "".join(c for c in (no_hp or "") if c.isdigit())
+    if not 9 <= len(hp) <= 15:
+        raise ValueError("Nomor HP/WhatsApp tidak valid")
+    if not (alamat or "").strip():
+        raise ValueError("Alamat pengiriman wajib diisi")
+    return hp, alamat.strip()
 
 
 def hitung_dus(jumlah, harga):
@@ -46,11 +77,11 @@ def hitung_dus(jumlah, harga):
     return jumlah * harga
 
 
-def validasi_pilihan(pilihan):
-    """Pastikan tepat 15 menu berbeda dan semuanya ada di daftar."""
+def validasi_pilihan(pilihan, jumlah=JUMLAH_MENU):
+    """Pastikan tepat `jumlah` menu berbeda dan semuanya ada di daftar."""
     unik = list(dict.fromkeys(pilihan))
-    if len(unik) != JUMLAH_MENU:
-        raise ValueError(f"Pilih tepat {JUMLAH_MENU} menu (sekarang {len(unik)})")
+    if len(unik) != jumlah:
+        raise ValueError(f"Pilih tepat {jumlah} menu (sekarang {len(unik)})")
     tidak_dikenal = [m for m in unik if m not in semua_menu()]
     if tidak_dikenal:
         raise ValueError("Menu tidak dikenal: " + ", ".join(tidak_dikenal))
