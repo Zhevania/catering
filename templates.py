@@ -312,7 +312,7 @@ BERANDA = r"""{% extends "base.html" %}{% from "macros.html" import pilih_menu %
 {% block bodyclass %}q{% endblock %}
 {% block body %}
 <header class="qhead"><div class="qwrap">
-<div class="qtop"><a class="qbrand" href="/">Queen<span>Catering</span></a><a class="qbtn" href="/login">Login Admin</a></div>
+<div class="qtop"><a class="qbrand" href="/">KING<span>Catering</span></a><a class="qbtn" href="/login">Login Admin</a></div>
 <nav class="qtabs"><a class="on" href="#paket">Paket catering</a><a href="#cek">Cek pesanan</a></nav>
 </div></header>
 
