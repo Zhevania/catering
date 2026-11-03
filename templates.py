@@ -270,7 +270,7 @@ cek();setInterval(cek,30000);
 
 EDIT = r"""{% extends "base.html" %}{% from "macros.html" import pilih_menu %}{% block title %}Edit pesanan · QueenCatering{% endblock %}
 {% block body %}
-<div class="nav"><div class="wrap"><div class="brand"><span>CIHUYY👑</span>QueenCatering</div><div class="sp"></div><a class="btn ghost sm" href="/admin">← Kembali</a></div></div>
+<div class="nav"><div class="wrap"><div class="brand"><span>👑</span>syalomCatering</div><div class="sp"></div><a class="btn ghost sm" href="/admin">← Kembali</a></div></div>
 <div class="wrap" style="max-width:860px;padding-top:28px">
 {% if p.jenis=='Paket' %}
 <form class="card" id="f-edit" method="post">
