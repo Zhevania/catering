@@ -41,12 +41,16 @@ def init_db():
         cur.execute("ALTER TABLE pesanan ADD COLUMN jenis VARCHAR(10) NOT NULL DEFAULT 'Dus'")
     if "pilihan_menu" not in kolom:
         cur.execute("ALTER TABLE pesanan ADD COLUMN pilihan_menu TEXT NULL")
-    # Kolom identitas pembeli & pax tambahan
+    # Kolom identitas pembeli, pax tambahan, dan kode pesanan
     for nama, ddl in [("no_hp", "VARCHAR(20) NULL"),
                       ("alamat", "TEXT NULL"),
                       ("catatan", "TEXT NULL"),
                       ("pax_paket", "INT NULL"),
-                      ("pax_tambahan", "INT NOT NULL DEFAULT 0")]:
+                      ("pax_tambahan", "INT NOT NULL DEFAULT 0"),
+                      ("telepon", "VARCHAR(20) NULL"),
+                      ("jam_acara", "VARCHAR(10) NULL"),
+                      ("sumber", "VARCHAR(20) NOT NULL DEFAULT 'Admin'"),
+                      ("kode", "VARCHAR(20) NULL")]:
         if nama not in kolom:
             cur.execute(f"ALTER TABLE pesanan ADD COLUMN {nama} {ddl}")
     cur.execute("""CREATE TABLE IF NOT EXISTS users (
