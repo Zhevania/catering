@@ -8,17 +8,16 @@ from jinja2 import DictLoader
 from werkzeug.security import check_password_hash
 
 from db import get_conn, init_db
-from logic import (hitung_paket, hitung_dus, validasi_pilihan, validasi_kontak,
-                   status_pengingat, MENU_PAKET, HARGA_PAKET, HARGA_TAMBAHAN,
-                   HARGA_PILIHAN, PILIHAN_PAX, PAKET, JUMLAH_MENU)
+from logic import (PAKET, MIN_HARI_PESAN, paket_by_nama, hitung_paket, hitung_dus,
+                   validasi_pilihan, validasi_tanggal, validasi_jam, buat_kode,
+                   status_pengingat, normalisasi_nomor)
 from templates import TEMPLATES
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "catering-umkm-dev-key")
 app.jinja_loader = DictLoader(TEMPLATES)
-app.jinja_env.globals.update(MENU_PAKET=MENU_PAKET, HARGA_PAKET=HARGA_PAKET,
-                             HARGA_TAMBAHAN=HARGA_TAMBAHAN, HARGA_PILIHAN=HARGA_PILIHAN,
-                             PILIHAN_PAX=PILIHAN_PAX, PAKET=PAKET, JUMLAH_MENU=JUMLAH_MENU)
+MIN_HARI = int(os.getenv("MIN_HARI_PESAN", MIN_HARI_PESAN))
+app.jinja_env.globals.update(PAKET=PAKET, MIN_HARI=MIN_HARI)
 
 TZ = timezone(timedelta(hours=int(os.getenv("TZ_OFFSET", "8"))))  # WITA
 BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
@@ -26,7 +25,7 @@ BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "
 
 @app.template_filter("rupiah")
 def rupiah(n):
-    return "Rp" + f"{int(n or 0):,}".replace(",", ".")
+    return "Rp " + f"{int(n or 0):,}".replace(",", ".")
 
 
 @app.template_filter("tgl")
@@ -84,7 +83,84 @@ def _nama(f):
     return nama
 
 
-# ---------- Auth ----------
+def _extra(f):
+    """Data tambahan pembeli (opsional) saat admin mengedit pesanan."""
+    tel = f.get("telepon", "").strip()
+    tel = normalisasi_nomor(tel) if tel else None
+    return (tel, f.get("alamat", "").strip() or None,
+            f.get("catatan", "").strip() or None, validasi_jam(f.get("jam", "")))
+
+
+# =====================================================
+#                  HALAMAN PEMBELI
+# =====================================================
+def _halaman_pembeli(form=None, error=None):
+    form = form if form is not None else {}
+    terpilih = form.getlist("menu") if hasattr(form, "getlist") else []
+    min_tgl = (hari_ini() + timedelta(days=MIN_HARI)).isoformat()
+    return render_template("beranda.html", f=form, terpilih=terpilih, error=error, min_tgl=min_tgl)
+
+
+@app.route("/")
+def beranda():
+    return _halaman_pembeli()
+
+
+@app.route("/pesan", methods=["POST"])
+def pesan():
+    f = request.form
+    if f.get("website"):  # jebakan spam (kolom tersembunyi)
+        return redirect(url_for("beranda"))
+    try:
+        kp = f.get("paket", "")
+        total = hitung_paket(kp)
+        pilihan = validasi_pilihan(kp, f.getlist("menu"))
+        paket = PAKET[kp]
+        nama = _nama(f)
+        telepon = normalisasi_nomor(f.get("telepon", ""))
+        alamat = f.get("alamat", "").strip()
+        if not alamat:
+            raise ValueError("Alamat / lokasi acara wajib diisi")
+        tanggal = validasi_tanggal(f.get("tanggal", ""), hari_ini(), MIN_HARI)
+        jam = validasi_jam(f.get("jam", ""))
+        catatan = f.get("catatan", "").strip()[:500] or None
+    except ValueError as e:
+        return _halaman_pembeli(f, str(e)), 400
+
+    kode = buat_kode()
+    for _ in range(5):
+        if not query("SELECT 1 AS x FROM pesanan WHERE kode=%s", (kode,), one=True):
+            break
+        kode = buat_kode()
+    query("INSERT INTO pesanan (pelanggan,menu,jumlah,harga_satuan,total,tanggal_acara,jenis,"
+          "pilihan_menu,telepon,alamat,catatan,jam_acara,sumber,kode) "
+          "VALUES (%s,%s,%s,%s,%s,%s,'Paket',%s,%s,%s,%s,%s,'Online',%s)",
+          (nama, paket["nama"], paket["pax"], paket["harga"], total, tanggal,
+           "|".join(pilihan), telepon, alamat, catatan, jam, kode), commit=True)
+    flash("Pesanan berhasil dikirim", "ok")
+    return redirect(url_for("lihat_pesanan", kode=kode))
+
+
+@app.route("/pesanan/<kode>")
+def lihat_pesanan(kode):
+    p = query("SELECT * FROM pesanan WHERE kode=%s", (kode.strip().upper(),), one=True)
+    if not p:
+        flash("Kode pesanan tidak ditemukan", "error")
+        return redirect(url_for("beranda"))
+    return render_template("pesanan.html", p=p)
+
+
+@app.route("/cek")
+def cek_pesanan():
+    kode = request.args.get("kode", "").strip().upper()
+    if not kode:
+        return redirect(url_for("beranda"))
+    return redirect(url_for("lihat_pesanan", kode=kode))
+
+
+# =====================================================
+#                  HALAMAN ADMIN
+# =====================================================
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -100,59 +176,9 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("beranda"))
 
 
-# ---------- Halaman pemesanan (pembeli) ----------
-@app.route("/")
-def index():
-    return render_template("order.html")
-
-
-@app.route("/pesan", methods=["POST"])
-def pesan():
-    try:
-        f = request.form
-        kunci = f.get("paket", "")
-        if kunci not in PAKET:
-            raise ValueError("Pilih paket terlebih dahulu")
-        paket = PAKET[kunci]
-        nama = _nama(f)
-        pax_paket = int(f.get("pax_paket") or 0)
-        tambahan = int(f.get("pax_tambahan") or 0)
-        pilihan = validasi_pilihan(f.getlist("menu"), paket["jumlah_menu"])
-        total = hitung_paket(pax_paket, tambahan)
-        hp, alamat = validasi_kontak(f.get("no_hp"), f.get("alamat"))
-        tanggal = f.get("tanggal") or None
-        if not tanggal:
-            raise ValueError("Tanggal acara wajib diisi")
-        if datetime.strptime(tanggal, "%Y-%m-%d").date() < hari_ini():
-            raise ValueError("Tanggal acara tidak boleh sudah lewat")
-        jumlah = pax_paket + tambahan
-        oid = query(
-            "INSERT INTO pesanan (pelanggan,menu,jumlah,harga_satuan,total,tanggal_acara,jenis,"
-            "pilihan_menu,no_hp,alamat,catatan,pax_paket,pax_tambahan) "
-            "VALUES (%s,%s,%s,%s,%s,%s,'Paket',%s,%s,%s,%s,%s,%s)",
-            (nama, paket["nama"], jumlah, HARGA_PAKET, total, tanggal, "|".join(pilihan),
-             hp, alamat, f.get("catatan", "").strip() or None, pax_paket, tambahan),
-            commit=True)
-        session["pesanan_terakhir"] = oid
-        return redirect(url_for("terima_kasih"))
-    except (ValueError, KeyError) as e:
-        flash(f"Gagal: {e}", "error")
-        return redirect(url_for("index"))
-
-
-@app.route("/terima-kasih")
-def terima_kasih():
-    oid = session.get("pesanan_terakhir")
-    p = query("SELECT * FROM pesanan WHERE id=%s", (oid,), one=True) if oid else None
-    if not p:
-        return redirect(url_for("index"))
-    return render_template("thanks.html", p=p)
-
-
-# ---------- Dashboard admin ----------
 @app.route("/admin")
 @login_required
 def admin():
@@ -160,8 +186,8 @@ def admin():
     st = request.args.get("status", "")
     sql, params = "SELECT * FROM pesanan WHERE 1=1", []
     if q:
-        sql += " AND (pelanggan LIKE %s OR menu LIKE %s)"
-        params += [f"%{q}%", f"%{q}%"]
+        sql += " AND (pelanggan LIKE %s OR menu LIKE %s OR kode LIKE %s OR telepon LIKE %s)"
+        params += [f"%{q}%"] * 4
     if st:
         sql += " AND status=%s"
         params.append(st)
@@ -183,7 +209,26 @@ def admin():
                            q=q, st=st, user=session["user"], today=tgl(today))
 
 
-# ---------- Tambah pesanan ----------
+@app.route("/tambah_paket", methods=["POST"])
+@login_required
+def tambah_paket():
+    try:
+        f = request.form
+        nama = _nama(f)
+        kp = f.get("paket", "")
+        total = hitung_paket(kp)
+        pilihan = validasi_pilihan(kp, f.getlist("menu"))
+        paket = PAKET[kp]
+        query("INSERT INTO pesanan (pelanggan,menu,jumlah,harga_satuan,total,tanggal_acara,jenis,pilihan_menu) "
+              "VALUES (%s,%s,%s,%s,%s,%s,'Paket',%s)",
+              (nama, paket["nama"], paket["pax"], paket["harga"], total,
+               f.get("tanggal") or None, "|".join(pilihan)), commit=True)
+        flash("Pesanan paket berhasil ditambahkan", "ok")
+    except (ValueError, KeyError) as e:
+        flash(f"Gagal: {e}", "error")
+    return redirect(url_for("admin"))
+
+
 @app.route("/tambah_dus", methods=["POST"])
 @login_required
 def tambah_dus():
@@ -204,7 +249,6 @@ def tambah_dus():
     return redirect(url_for("admin"))
 
 
-# ---------- Edit, selesai, hapus ----------
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 @login_required
 def edit(id):
@@ -216,18 +260,17 @@ def edit(id):
         try:
             f = request.form
             nama, tanggal = _nama(f), f.get("tanggal") or None
+            tel, alamat, catatan, jam = _extra(f)
             if p["jenis"] == "Paket":
-                pax_paket = int(f["pax_paket"])
-                tambahan = int(f.get("pax_tambahan") or 0)
-                pilihan = validasi_pilihan(f.getlist("menu"))
-                total = hitung_paket(pax_paket, tambahan)
-                hp, alamat = validasi_kontak(f.get("no_hp"), f.get("alamat"))
-                query("UPDATE pesanan SET pelanggan=%s, jumlah=%s, harga_satuan=%s, total=%s, "
-                      "tanggal_acara=%s, pilihan_menu=%s, no_hp=%s, alamat=%s, catatan=%s, "
-                      "pax_paket=%s, pax_tambahan=%s WHERE id=%s",
-                      (nama, pax_paket + tambahan, HARGA_PAKET, total, tanggal, "|".join(pilihan),
-                       hp, alamat, f.get("catatan", "").strip() or None, pax_paket, tambahan, id),
-                      commit=True)
+                kp = f.get("paket", "")
+                total = hitung_paket(kp)
+                pilihan = validasi_pilihan(kp, f.getlist("menu"))
+                paket = PAKET[kp]
+                query("UPDATE pesanan SET pelanggan=%s, menu=%s, jumlah=%s, harga_satuan=%s, total=%s, "
+                      "tanggal_acara=%s, pilihan_menu=%s, telepon=%s, alamat=%s, catatan=%s, jam_acara=%s "
+                      "WHERE id=%s",
+                      (nama, paket["nama"], paket["pax"], paket["harga"], total, tanggal,
+                       "|".join(pilihan), tel, alamat, catatan, jam, id), commit=True)
             else:
                 menu = f.get("menu", "").strip()
                 if not menu:
@@ -235,13 +278,15 @@ def edit(id):
                 jumlah, harga = int(f["jumlah"]), int(f["harga"])
                 total = hitung_dus(jumlah, harga)
                 query("UPDATE pesanan SET pelanggan=%s, menu=%s, jumlah=%s, harga_satuan=%s, total=%s, "
-                      "tanggal_acara=%s WHERE id=%s",
-                      (nama, menu, jumlah, harga, total, tanggal, id), commit=True)
+                      "tanggal_acara=%s, telepon=%s, alamat=%s, catatan=%s, jam_acara=%s WHERE id=%s",
+                      (nama, menu, jumlah, harga, total, tanggal, tel, alamat, catatan, jam, id),
+                      commit=True)
             flash("Pesanan berhasil diperbarui", "ok")
             return redirect(url_for("admin"))
         except (ValueError, KeyError) as e:
             flash(f"Gagal: {e}", "error")
-    return render_template("edit.html", p=p, user=session["user"])
+    return render_template("edit.html", p=p, user=session["user"],
+                           paket_key=paket_by_nama(p["menu"]) if p["jenis"] == "Paket" else "")
 
 
 @app.route("/status/<int:id>", methods=["POST"])
@@ -260,7 +305,6 @@ def hapus(id):
     return redirect(url_for("admin"))
 
 
-# ---------- Pemberitahuan ----------
 @app.route("/api/notifikasi")
 def api_notifikasi():
     if "user" not in session:
