@@ -219,7 +219,7 @@ DASH = r"""{% extends "base.html" %}{% from "macros.html" import pilih_menu %}{%
 
 <div class="card"><h3 style="margin-bottom:12px">📋 Daftar pesanan</h3>
 <form class="tools" method="get"><input name="q" value="{{ q }}" placeholder="Cari nama, menu, kode, atau nomor...">
-<select name="status"><option value="">Semua status</option><option {% if st=='Baru' %}selected{% endif %}>Baru</option><option {% if st=='Selesai' %}selected{% endif %}>Selesai</option></select>
+<select name="status"><option value="">Status Pesanan</option><option {% if st=='Baru' %}selected{% endif %}>Baru</option><option {% if st=='Selesai' %}selected{% endif %}>Selesai</option></select>
 <button class="btn sm">Cari</button></form>
 <div class="tbl"><table><tr><th>Pelanggan</th><th>Pesanan</th><th>Porsi/Pax</th><th>Total</th><th>Tanggal</th><th>Status</th><th>Aksi</th></tr>
 {% for r in rows %}<tr>
