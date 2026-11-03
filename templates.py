@@ -363,7 +363,7 @@ BERANDA = r"""{% extends "base.html" %}{% from "macros.html" import pilih_menu %
 {% endblock %}
 {% block script %}<script>initPaketForm(document.getElementById('f-pesan'));</script>{% endblock %}"""
 
-PESANAN = r"""{% extends "base.html" %}{% block title %}Pesanan {{ p.kode }} · QueenCatering{% endblock %}
+PESANAN = r"""{% extends "base.html" %}{% block title %}Pesanan {{ p.kode }} · Queen Catering{% endblock %}
 {% block bodyclass %}q{% endblock %}
 {% block body %}
 <header class="qhead"><div class="qwrap"><div class="qtop"><a class="qbrand" href="/">Queen<span>Catering</span></a><a class="qbtn" href="/">← Pesan lagi</a></div><nav class="qtabs"><a class="on" href="#">Pesanan kamu</a></nav></div></header>
